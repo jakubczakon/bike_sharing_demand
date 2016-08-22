@@ -7,8 +7,12 @@ from sklearn.base import BaseEstimator,TransformerMixin
 from sklearn.preprocessing import OneHotEncoder, LabelEncoder
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.ensemble import RandomForestRegressor 
+from sklearn.cross_validation import train_test_split
 
 from statistics import mode
+
+from evaluation_utils import rmsle
 
 
 class ExtractColumns(BaseEstimator, TransformerMixin):
@@ -59,9 +63,10 @@ class ExtractTimes(BaseEstimator, TransformerMixin):
         return X
     
 class PandasOneHotEncoder(BaseEstimator, TransformerMixin):
-    def __init__(self,colname):
+    def __init__(self,colname,drop_colname=True):
         self.colname = colname
         self.one_hot_encoder = OneHotEncoder(sparse=False)
+        self.drop_colname = drop_colname
         
     def fit(self, X, y=None):
         self.one_hot_encoder.fit(X[self.colname].values.reshape(-1, 1))
@@ -78,8 +83,22 @@ class PandasOneHotEncoder(BaseEstimator, TransformerMixin):
         for i,var in enumerate(new_categorical_varnames):
             X_out[var] = X_one_hot_encoded[:,i]
         
+        if self.drop_colname:
+            X_out = X_out.drop([self.colname],axis=1)
+        
         return X_out
     
+class DateToNumber(BaseEstimator, TransformerMixin):
+    def __init__(self,colname):
+        self.colname = colname
+        
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X, y=None, copy=None):
+        X_out = X.copy()
+        X_out[self.colname] = pd.to_numeric(X[self.colname])/3600000000000./24./30.
+        return X_out.astype(int)
     
 class PandasLabelEncoder(BaseEstimator, TransformerMixin):
     def __init__(self,colname):
@@ -114,7 +133,7 @@ class AddTimeGaps(BaseEstimator, TransformerMixin):
         X_out["edge_lag_%s"%self.lag] =  X_out["edge_lag_%s"%self.lag]*1.0
         X_out = X_out.drop(["time_diff","max_in_lag"],axis=1)           
         return X_out
- 
+
 
 class LaggingValues(BaseEstimator, TransformerMixin):
     
@@ -155,6 +174,7 @@ class LaggingMedian(BaseEstimator, TransformerMixin):
             new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
             X_out[new_colname] = pd.Series.rolling(X_out[self.colname],window = self.lag,min_periods=1).median()
             X_out = X_out.sort_values(["datetime"])
+            X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
             X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
             return X_out
         
@@ -182,6 +202,7 @@ class LaggingMedian(BaseEstimator, TransformerMixin):
 
         X_out = X_out.sort_values(["datetime"])
         new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
+        X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
         X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
         return X_out
 
@@ -205,6 +226,7 @@ class LaggingMax(BaseEstimator, TransformerMixin):
             new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
             X_out[new_colname] = pd.Series.rolling(X_out[self.colname],window = self.lag,min_periods=1).max()
             X_out = X_out.sort_values(["datetime"])
+            X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
             X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
             return X_out
         
@@ -232,6 +254,7 @@ class LaggingMax(BaseEstimator, TransformerMixin):
 
         X_out = X_out.sort_values(["datetime"])
         new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
+        X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
         X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
         return X_out
 
@@ -254,6 +277,7 @@ class LaggingMin(BaseEstimator, TransformerMixin):
             new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
             X_out[new_colname] = pd.Series.rolling(X_out[self.colname],window = self.lag,min_periods=1).min()
             X_out = X_out.sort_values(["datetime"])
+            X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
             X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
             return X_out
         
@@ -281,14 +305,9 @@ class LaggingMin(BaseEstimator, TransformerMixin):
 
         X_out = X_out.sort_values(["datetime"])
         new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
+        X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
         X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
         return X_out
-
-def safe_mode(x):
-    try:
-        return mode(x)
-    except Exception:
-        return np.nan
     
     
 class LaggingMode(BaseEstimator, TransformerMixin):
@@ -310,6 +329,7 @@ class LaggingMode(BaseEstimator, TransformerMixin):
             X_out[new_colname] = pd.Series.rolling(X_out[self.colname],
                                                    window = self.lag,min_periods=1).apply(lambda x: safe_mode(x))
             X_out = X_out.sort_values(["datetime"])
+            X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
             X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
             return X_out
         
@@ -337,334 +357,63 @@ class LaggingMode(BaseEstimator, TransformerMixin):
 
         X_out = X_out.sort_values(["datetime"])
         new_colname = self.colname+"_%s_%s_%s"%(self.mode,trans_name,self.lag)
+        X_out[new_colname] = X_out[new_colname].fillna(method = "bfill")
         X_out[new_colname] = X_out[new_colname].fillna(X_out[self.colname])
         return X_out
 
+
+class RandomForestFeatureSelector(BaseEstimator, TransformerMixin):
+    
+    def __init__(self,n_estimators,drop_rate,feature_threshold,max_error_increase):
+        self.n_estimators = n_estimators
+        self.drop_rate = drop_rate
+        self.feature_threshold = feature_threshold
+        self.max_error_increase = max_error_increase
+        
+    def fit(self, X, y=None):
+        self.important_features = X.columns.values
+        self.last_rmsle = 10
+        features = X.shape[1]
+        while (features>self.feature_threshold):
+            print "Number of features:",features
+            X_tr,X_ts,Y_tr,Y_ts = train_test_split(X,y,train_size=0.8)
+            
+            rf = RandomForestRegressor(n_estimators=self.n_estimators,n_jobs=3)
+            rf.fit(X_tr,Y_tr)
+            Y_pred = rf.predict(X_ts)
+            current_error = rmsle(Y_pred,Y_ts)
+            
+            error_change = current_error - self.last_rmsle
+            print error_change
+            if error_change > self.max_error_increase:
+                print "last",self.last_rmsle
+                print "current",current_error
+                
+                break
+            else:
+                self.last_rmsle = current_error
+            
+                importances = pd.DataFrame(dict(features = X.columns.values,
+                                                importance =rf.feature_importances_)) 
+                importances = importances.sort_values(["importance"],ascending=False)
+                X = X[importances["features"].values[:-self.drop_rate]]
+                features = X.shape[1]
+                self.important_features = X.columns.values
+                print "current error:",current_error
+                
+        return self
+    
+    def transform(self, X, y=None, copy=None):        
+        return X[self.important_features]
+
+def safe_mode(x):
+    try:
+        return mode(x)
+    except Exception:
+        return np.nan
     
 def is_day_or_night(hour,day_limits = [6,21]):
     if hour>day_limits[0] and hour<day_limits[1]:
         return 1
     else:
         return 0
-
-
-def add_edge_gap(data,lag):
-    result = data
-    result["time_diff"] = result["datetime"].diff()
-    result["time_diff"] = pd.to_numeric(result["time_diff"])/3600000000000
-    result["max_in_lag"] = pd.Series.rolling(result["time_diff"],window=lag).max()
-    result["max_in_lag"] = result["max_in_lag"].fillna(30)
-    result["edge_lag_%s"%lag] = result["max_in_lag"].apply(lambda x:x>24)
-    result["edge_lag_%s"%lag] =  result["edge_lag_%s"%lag]*1.0
-    result.drop(["time_diff","max_in_lag"],axis=1)
-    
-    return result
-        
-def generate_timelag_data(data,lag = 3):
-    final = data
-    lagging_set = data.drop(["time_hour","date_weekday",
-                             "date_month","date_year",
-                             "workingday","holiday","season"],axis = 1)
-    for i in range(1,lag,1):
-        x = lagging_set
-        x = x.shift(i)
-        x.rename(columns=lambda x: x+"_lag_%s"%i, inplace=True)
-        final = pd.concat([final,x], axis=1)
-    final = final.fillna(method="bfill")
-   
-    return final
-
-def generate_mean_timelag_data(data,colnames,lag = 20):
-    result = data
-    for var_name in colnames:
-        var_name_new = var_name+"_mean_whole_day_lag_%s"%lag
-        result[var_name_new] = pd.Series.rolling(result[var_name],window = lag,min_periods=1).mean()
-        result = result.fillna(method="bfill")
-    return result
-
-def generate_median_timelag_data(data,colnames,lag = 20):
-    result = data
-    for var_name in colnames:
-        var_name_new = var_name+"_median_whole_day_lag_%s"%lag
-        result[var_name_new] = pd.Series.rolling(result[var_name],window = lag,min_periods=1).mean()
-        result = result.fillna(method="bfill")
-    return result
-
-def generate_min_timelag_data(data,colnames,lag = 20):
-    result = data
-    for var_name in colnames:
-        var_name_new = var_name+"_min_whole_day_lag_%s"%lag
-        result[var_name_new] = pd.Series.rolling(result[var_name],window = lag,min_periods=1).min()
-        result = result.fillna(method="bfill")
-    return result
-
-def generate_max_timelag_data(data,colnames,lag = 20):
-    result = data
-    for var_name in colnames:
-        var_name_new = var_name+"_max_whole_day_lag_%s"%lag
-        result[var_name_new] = pd.Series.rolling(result[var_name],window = lag,min_periods=1).max()
-        result = result.fillna(method="bfill")
-    return result
-
-def lagged_day_night_mean(data,colnames,lag,mode = "day"):
-    trans_name = "mean"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                gp[new_colname] = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=1).mean()
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(full_result[colname])
-    return full_result
-
-def lagged_day_night_median(data,colnames,lag,mode = "day"):
-    trans_name = "median"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                gp[new_colname] = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=1).median()
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(full_result[colname])
-    return full_result
-
-def lagged_day_night_max(data,colnames,lag,mode = "day"):
-    trans_name = "max"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                gp[new_colname] = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=1).max()
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(full_result[colname])
-    return full_result
-
-def lagged_day_night_min(data,colnames,lag,mode = "day"):
-    trans_name = "min"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                gp[new_colname] = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=1).min()
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(full_result[colname])
-    return full_result
-
-def lagged_day_night_quantile_25(data,colnames,lag,mode = "day"):
-    trans_name = "quantile_25"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                gp[new_colname] = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=4).quantile(0.25)
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(full_result[colname])
-    return full_result
-
-def lagged_day_night_quantile_75(data,colnames,lag,mode = "day"):
-    trans_name = "quantile_75"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                gp[new_colname] = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=4).quantile(0.75)
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(full_result[colname])
-    return full_result
-
-def lagged_day_night_span(data,colnames,lag,mode = "day"):
-    trans_name = "span"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                var_max = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=lag).max()
-                
-                var_min = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=lag).min()
-                
-                gp[new_colname] = var_max-var_min
-                
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(0)
-    return full_result
-
-def lagged_day_night_quantile_variation(data,colnames,lag,mode = "day"):
-    trans_name = "quantile_variation"
-    data["day_night"] = data['time_hour'].apply(lambda x: is_day_or_night(x))
-    if mode=="day":
-        mode_value=1
-        
-    elif mode=="night":
-        mode_value=0
-    else:
-        raise Exception("Wrong mode")
-        
-    full_result = data.set_index("datetime",drop=False)
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        g= data.set_index('day_night', append=True,drop=False).groupby(level=1)
-        colname_result = pd.DataFrame()
-        for k, gp in g:
-            if k==mode_value:
-                var_max = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=lag).quantile(0.75)
-                
-                var_min = pd.Series.rolling(gp[colname],
-                                                       window=lag,
-                                                       min_periods=lag).quantile(0.25)
-                
-                gp[new_colname] = var_max-var_min
-                
-            colname_result = pd.concat([colname_result,gp])
-        colname_result = colname_result.set_index("datetime",drop=False)
-        full_result[new_colname] = colname_result[new_colname]
-
-    full_result = full_result.sort_values(["datetime"]).fillna(method="ffill")
-    for colname in colnames:
-        new_colname = colname+"_%s_%s_%s"%(mode,trans_name,lag)
-        full_result[new_colname] = full_result[new_colname].fillna(0)
-    return full_result
