@@ -12,7 +12,34 @@ from sklearn.cross_validation import train_test_split
 
 from statistics import mode
 
-from evaluation_utils import rmsle
+from evaluation_utils import rmsle, log_pandas, inv_log_pandas
+
+
+class DataToTimeStamps(BaseEstimator, TransformerMixin):
+    def __init__(self,stamp_size,dim_out):
+        self.stamp_size = stamp_size
+        self.dim_out = dim_out
+    
+    def fit(self, X, y=None):
+        return self
+
+    def transform(self, X, y=None, copy=None):
+        X_out = X.copy()
+        X_out = pd.DataFrame(X_out)
+        X = pd.DataFrame(X)
+        stamp_list = []
+        for i in range(self.stamp_size):
+            x = X.copy()
+            x = x.shift(i)
+            x = x.fillna(0)
+            stamp_list.append(x) 
+        X_out = np.stack(stamp_list)
+        X_out = X_out.transpose(1,0,2)
+        if self.dim_out==4:
+            n,t,v = X_out.shape
+            X_out = X_out.reshape((n,t,1,v))
+        
+        return X_out 
 
 
 class ExtractColumns(BaseEstimator, TransformerMixin):
@@ -41,6 +68,43 @@ class DropColumns(BaseEstimator, TransformerMixin):
         return X
 
 
+class ExtractTimes(BaseEstimator, TransformerMixin):
+    def __init__(self):
+        pass
+    
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X, y=None, copy=None):
+        
+        X["datetime"] =  pd.to_datetime(X["datetime"], 
+                                           format="%Y-%m-%d %H:%M:%S")
+        X["time_hour"] = X["datetime"].apply(lambda x: x.hour)
+        X["date_weekday"] = X["datetime"].apply(lambda x: x.weekday())
+        X["date_month"] = X["datetime"].apply(lambda x: x.month)
+        X["date_day"] = X["datetime"].apply(lambda x: x.day)
+        X["date_year"] = X["datetime"].apply(lambda x: x.year)
+        X["day_night"] = X['time_hour'].apply(lambda x: is_day_or_night(x))
+        X = X.sort_values(["datetime"])
+        
+        return X
+    
+class BinVariable(BaseEstimator, TransformerMixin):
+    def __init__(self,bins,colname,drop_column = True):
+        self.bins = bins
+        self.colname = colname
+        self.drop_column = drop_column
+    
+    def fit(self, X, y=None):
+        return self
+    
+    def transform(self, X, y=None, copy=None):
+        X_out = X.copy()
+        X_out[self.colname+"_binned"] = pd.cut(X[self.colname],bins = self.bins,include_lowest=True)
+        if self.drop_column:
+            X_out = X_out.drop([self.colname],axis=1)
+        return X_out
+    
 class ExtractTimes(BaseEstimator, TransformerMixin):
     def __init__(self):
         pass
@@ -380,8 +444,11 @@ class RandomForestFeatureSelector(BaseEstimator, TransformerMixin):
             
             rf = RandomForestRegressor(n_estimators=self.n_estimators,n_jobs=3)
             rf.fit(X_tr,Y_tr)
-            Y_pred = rf.predict(X_ts)
-            current_error = rmsle(Y_pred,Y_ts)
+            
+            Y_pred_valid_count = pd.DataFrame(rf.predict(X_ts)).apply(inv_log_pandas)
+            Y_ts = pd.DataFrame(Y_ts)
+            current_error = rmsle(Y_pred_valid_count.values.ravel(),
+                                       Y_ts.apply(inv_log_pandas).values.ravel())
             
             error_change = current_error - self.last_rmsle
             print error_change
