@@ -25,8 +25,5 @@ class ReportRmsleError(Callback):
         y_pred = self.model.predict(self.X_callback)
         y_pred = np.exp(y_pred)-1
         y_true = np.exp(self.y_callback)-1
-        #y_true = self.y_callback
 
-        print "\n"
         print "RMSLE error:",rmsle(y_pred,y_true)
-        print "\n"
