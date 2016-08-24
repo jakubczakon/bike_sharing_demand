@@ -8,7 +8,7 @@ def rmsle_on_logs(y_pred,y_actual):
     return np.sqrt(np.mean(np.square(y_pred-y_actual)))
 
 def rmsle_score_on_logs(y_pred,y_actual):
-    return np.maximum(1-np.sqrt(np.mean(np.square(y_pred-y_actual))),0)
+    return -np.sqrt(np.mean(np.square(y_pred-y_actual)))
 
 def log_pandas(x):
     return np.log(x+1)
